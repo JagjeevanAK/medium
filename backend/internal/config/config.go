@@ -6,11 +6,13 @@ import "sync/atomic"
 type ApiConfig struct {
 	FileserverHits atomic.Int32
 	Platform       string
+	JWTSecret      string
 }
 
 // NewApiConfig creates a new API configuration
-func NewApiConfig(platform string) *ApiConfig {
+func NewApiConfig(platform, jwtSecret string) *ApiConfig {
 	return &ApiConfig{
-		Platform: platform,
+		Platform:  platform,
+		JWTSecret: jwtSecret,
 	}
 }

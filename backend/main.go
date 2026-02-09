@@ -19,29 +19,45 @@ func main() {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
 	platform := os.Getenv("PLATFORM")
+	jwtSecret := os.Getenv("JWT_SECRET")
+
+	if jwtSecret == "" {
+		log.Fatal("JWT_SECRET environment variable is required")
+	}
+
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
 		log.Fatal("Failed to create database connection:", err)
 	}
+
+	if err := db.Ping(); err != nil {
+		log.Fatal("Failed to connect to database:", err)
+	}
+
 	dbQueries := database.New(db)
 
 	mux := http.NewServeMux()
 
-	apicfg := config.NewApiConfig(platform)
+	apicfg := config.NewApiConfig(platform, jwtSecret)
 
-	// mux.Handle("/", http.FileServer(http.Dir(".")))
+	// Static file server with metrics
 	mux.Handle("/app/", middleware.Metrics(&apicfg.FileserverHits)(http.StripPrefix("/app", http.FileServer((http.Dir("."))))))
 
+	// Setup all API routes
 	routes.SetupRoutes(mux, dbQueries, apicfg)
+
+	// Wrap with CORS and logging middleware
+	handler := middleware.CORS(middleware.Logger(mux))
 
 	server := &http.Server{
 		Addr:    ":8080",
-		Handler: middleware.Logger(mux),
+		Handler: handler,
 	}
 
-	fmt.Println("Server url: http://localhost:8080")
+	fmt.Println("Server running at http://localhost:8080")
+	fmt.Println("API available at http://localhost:8080/api")
 	err = server.ListenAndServe()
 	if err != nil {
-		log.Printf("error:%s", err)
+		log.Fatalf("Server error: %s", err)
 	}
 }

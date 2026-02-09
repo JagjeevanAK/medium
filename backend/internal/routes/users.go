@@ -1,71 +1,75 @@
 package routes
 
 import (
-	"encoding/json"
-	"log"
 	"net/http"
 
-	"github.com/google/uuid"
+	"github.com/jagjeevanak/golang-server/internal/config"
 	"github.com/jagjeevanak/golang-server/internal/database"
+	"github.com/jagjeevanak/golang-server/internal/middleware"
 )
 
-// UserRoutes sets up user-related routes
-func UserRoutes(mux *http.ServeMux, dbQueries *database.Queries) {
-	mux.HandleFunc("POST /api/users", func(w http.ResponseWriter, r *http.Request) {
-		type reqData struct {
-			Email string `json:"email"`
-		}
-
-		data := json.NewDecoder(r.Body)
-		params := reqData{}
-
-		err := data.Decode(&params)
-		if err != nil {
-			log.Printf("Issue while Decoding json data or may no required data is present in body: %v", err)
-			http.Error(w, "Invalid JSON data", http.StatusBadRequest)
+// UserRoutes sets up user profile-related routes
+func UserRoutes(mux *http.ServeMux, dbQueries *database.Queries, cfg *config.ApiConfig) {
+	// GET /api/users/{username} - Get public profile
+	mux.HandleFunc("GET /api/users/{username}", func(w http.ResponseWriter, r *http.Request) {
+		username := r.PathValue("username")
+		if username == "" {
+			respondError(w, http.StatusBadRequest, "Username is required")
 			return
 		}
 
-		userData, err := dbQueries.CreateUser(r.Context(), params.Email)
+		user, err := dbQueries.GetUserByUsername(r.Context(), sqlNullString(username))
 		if err != nil {
-			http.Error(w, "Failed to create user", http.StatusInternalServerError)
+			respondError(w, http.StatusNotFound, "User not found")
 			return
 		}
 
-		user, err := json.Marshal(userData)
-		if err != nil {
-			log.Printf("Failed to marshal the data %s\n", err)
-			http.Error(w, "Failed to marshal user data", http.StatusInternalServerError)
-			return
-		}
+		followerCount, _ := dbQueries.CountFollowers(r.Context(), user.ID)
+		followingCount, _ := dbQueries.CountFollowing(r.Context(), user.ID)
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		w.Write(user)
+		respondJSON(w, http.StatusOK, map[string]interface{}{
+			"id":              user.ID,
+			"username":        nullStringToStr(user.Username),
+			"name":            user.Name,
+			"bio":             user.Bio,
+			"avatar_url":      user.AvatarUrl,
+			"follower_count":  followerCount,
+			"following_count": followingCount,
+			"created_at":      user.CreatedAt,
+		})
 	})
-}
 
-// ChirpRoutes sets up chirp-related routes
-func ChirpRoutes(mux *http.ServeMux, dbQueries *database.Queries) {
-	mux.HandleFunc("POST /api/chirps", func(w http.ResponseWriter, r *http.Request) {
-		type bodyData struct {
-			Body    string    `json:"body"`
-			User_id uuid.UUID `json:"user_id"`
-		}
-
-		data := json.NewDecoder(r.Body)
-		params := bodyData{}
-
-		err := data.Decode(&params)
-		if err != nil {
-			log.Println("failed to marshal the data")
+	// PUT /api/users - Update own profile (auth required)
+	mux.Handle("PUT /api/users", middleware.Auth(cfg.JWTSecret)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := middleware.GetUserID(r)
+		if !ok {
+			respondError(w, http.StatusUnauthorized, "Unauthorized")
 			return
 		}
 
-		// TODO: Add chirp creation logic here
-		// For now, just return success
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		w.Write([]byte(`{"message": "Chirp created successfully"}`))
-	})
+		type request struct {
+			Name      string `json:"name"`
+			Bio       string `json:"bio"`
+			AvatarUrl string `json:"avatar_url"`
+		}
+
+		var req request
+		if err := decodeJSON(r, &req); err != nil {
+			respondError(w, http.StatusBadRequest, "Invalid request body")
+			return
+		}
+
+		user, err := dbQueries.UpdateUserProfile(r.Context(), database.UpdateUserProfileParams{
+			ID:        userID,
+			Name:      req.Name,
+			Bio:       req.Bio,
+			AvatarUrl: req.AvatarUrl,
+		})
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "Failed to update profile")
+			return
+		}
+
+		respondJSON(w, http.StatusOK, userResponse(user))
+	})))
 }
