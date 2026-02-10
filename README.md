@@ -1,4 +1,4 @@
-# Medium Clone
+# Medium 
 
 A full-stack blogging platform inspired by Medium, built with a Go backend and Next.js frontend.
 
